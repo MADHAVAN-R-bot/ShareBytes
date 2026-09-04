@@ -19,6 +19,12 @@ export interface UserProfile {
   verified_status: VerificationStatus;
   rejection_reason?: string;
   created_at: string;
+  // Demo-mode only: stored password for local auth validation (not for production)
+  demo_password?: string;
+  // Additional profile fields
+  fssai_number?: string;
+  cuisine_type?: string;
+  org_registration_number?: string;
 }
 
 export interface FoodListing {

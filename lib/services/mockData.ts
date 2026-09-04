@@ -11,6 +11,7 @@ export const initialProfiles: UserProfile[] = [
     address: 'Central Tech Hub, Chennai',
     verified_status: 'verified',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-rest-01',
@@ -24,6 +25,7 @@ export const initialProfiles: UserProfile[] = [
     entity_photo_url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=500&auto=format&fit=crop&q=60',
     verified_status: 'verified',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-rest-02',
@@ -37,6 +39,7 @@ export const initialProfiles: UserProfile[] = [
     entity_photo_url: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=500&auto=format&fit=crop&q=60',
     verified_status: 'pending',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-donor-01',
@@ -49,6 +52,7 @@ export const initialProfiles: UserProfile[] = [
     entity_photo_url: 'https://images.unsplash.com/photo-1555244162-803834f70033?w=500&auto=format&fit=crop&q=60',
     verified_status: 'verified',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-ngo-01',
@@ -62,6 +66,7 @@ export const initialProfiles: UserProfile[] = [
     entity_photo_url: 'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?w=500&auto=format&fit=crop&q=60',
     verified_status: 'verified',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-ngo-02',
@@ -75,6 +80,7 @@ export const initialProfiles: UserProfile[] = [
     entity_photo_url: 'https://images.unsplash.com/photo-1593113598332-cd288d649433?w=500&auto=format&fit=crop&q=60',
     verified_status: 'pending',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
   {
     id: 'usr-cust-01',
@@ -85,6 +91,7 @@ export const initialProfiles: UserProfile[] = [
     address: 'Flat 4B, Emerald Heights, Chennai',
     verified_status: 'verified',
     created_at: new Date().toISOString(),
+    demo_password: 'demo1234',
   },
 ];
 

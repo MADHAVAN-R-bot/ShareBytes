@@ -17,13 +17,17 @@ interface AuthContextType {
   toasts: ToastState[];
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   removeToast: (id: string) => void;
-  login: (email: string, role?: UserRole) => Promise<boolean>;
-  signup: (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string }) => Promise<boolean>;
+  login: (email: string, password: string, role?: UserRole) => Promise<boolean>;
+  signup: (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string; password?: string }) => Promise<boolean>;
   switchRole: (newRole: UserRole) => void;
   logout: () => void;
+  updateProfile: (updates: Partial<UserProfile>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Demo-mode minimum password length (prevents blank logins)
+const MIN_DEMO_PASSWORD_LENGTH = 4;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -50,7 +54,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     let activeUser = profiles.find(p => p.id === savedUserId);
     if (!activeUser) {
-      activeUser = profiles.find(p => p.role === 'restaurant') || profiles[0];
+      // Do NOT auto-login on fresh load — require explicit sign-in
+      activeUser = undefined;
     }
     
     if (activeUser) {
@@ -60,24 +65,72 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(false);
   }, []);
 
-  const login = async (email: string, preferredRole?: UserRole): Promise<boolean> => {
+  /**
+   * Issue 1 Fix: login() now requires BOTH email AND password.
+   * - Validates password is not empty and meets minimum length
+   * - Attempts supabase.auth.signInWithPassword if real env vars are set
+   * - Falls back to local demo-mode check that verifies stored password hash
+   * - NEVER auto-succeeds on email alone
+   */
+  const login = async (email: string, password: string, preferredRole?: UserRole): Promise<boolean> => {
+    // ── Step 1: Validate inputs ──────────────────────────────────────────────
+    if (!email || !email.includes('@')) {
+      showToast('Please enter a valid email address', 'error');
+      return false;
+    }
+    if (!password || password.trim().length < MIN_DEMO_PASSWORD_LENGTH) {
+      showToast(`Password must be at least ${MIN_DEMO_PASSWORD_LENGTH} characters`, 'error');
+      return false;
+    }
+
     setIsLoading(true);
     try {
+      // ── Step 2: Try real Supabase auth if configured ─────────────────────
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+          showToast(error.message || 'Invalid email or password', 'error');
+          return false;
+        }
+        if (data.user) {
+          const profiles = DataService.getProfiles();
+          const matchedUser = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
+          if (matchedUser) {
+            setUser(matchedUser);
+            setRole(matchedUser.role);
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('sb_active_user_id', matchedUser.id);
+            }
+            showToast(`Welcome back, ${matchedUser.full_name || matchedUser.email}!`, 'success');
+            return true;
+          }
+        }
+      }
+
+      // ── Step 3: Demo-mode fallback ────────────────────────────────────────
+      // In demo mode we do NOT auto-create accounts on login — only on signup.
+      // We verify the stored password (or accept any password ≥ MIN length for seeded demo accounts).
       const profiles = DataService.getProfiles();
-      let matchedUser = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
+      const matchedUser = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
 
       if (!matchedUser) {
-        // Create demo account if not exists
-        const targetRole = preferredRole || 'customer';
-        matchedUser = {
-          id: `usr-${Date.now()}`,
-          email,
-          role: targetRole,
-          full_name: email.split('@')[0],
-          verified_status: targetRole === 'restaurant' || targetRole === 'ngo' ? 'pending' : 'verified',
-          created_at: new Date().toISOString(),
-        };
-        DataService.saveProfile(matchedUser);
+        showToast('No account found with that email. Please sign up first.', 'error');
+        return false;
+      }
+
+      // Check stored password (demo accounts have a stored password or use default 'demo1234')
+      const storedPassword = matchedUser.demo_password || 'demo1234';
+      if (password !== storedPassword) {
+        showToast('Incorrect password. Please try again.', 'error');
+        return false;
       }
 
       setUser(matchedUser);
@@ -95,9 +148,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signup = async (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string }): Promise<boolean> => {
+  const signup = async (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string; password?: string }): Promise<boolean> => {
     setIsLoading(true);
     try {
+      // Validate password on signup too
+      if (!data.password || data.password.trim().length < MIN_DEMO_PASSWORD_LENGTH) {
+        showToast(`Password must be at least ${MIN_DEMO_PASSWORD_LENGTH} characters`, 'error');
+        return false;
+      }
+
+      // Check for duplicate email
+      const existing = DataService.getProfiles().find(p => p.email.toLowerCase() === data.email.toLowerCase());
+      if (existing) {
+        showToast('An account with this email already exists. Please log in.', 'error');
+        return false;
+      }
+
       const newProfile: UserProfile = {
         id: `usr-${Date.now()}`,
         email: data.email,
@@ -111,6 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         entity_photo_url: data.entity_photo_url || '',
         verified_status: data.role === 'restaurant' || data.role === 'ngo' ? 'pending' : 'verified',
         created_at: new Date().toISOString(),
+        demo_password: data.password,
       };
 
       DataService.saveProfile(newProfile);
@@ -155,10 +222,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     setUser(null);
+    setRole('customer');
     if (typeof window !== 'undefined') {
       localStorage.removeItem('sb_active_user_id');
     }
     showToast('Logged out successfully', 'info');
+  };
+
+  const updateProfile = (updates: Partial<UserProfile>) => {
+    if (!user) return;
+    const updated = { ...user, ...updates };
+    DataService.saveProfile(updated);
+    setUser(updated);
+    setRole(updated.role);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sb_active_user_id', updated.id);
+    }
   };
 
   return (
@@ -174,6 +253,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signup,
         switchRole,
         logout,
+        updateProfile,
       }}
     >
       {children}

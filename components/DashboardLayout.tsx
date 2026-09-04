@@ -15,27 +15,45 @@ interface SidebarLink {
 
 const roleLinks: Record<UserRole, SidebarLink[]> = {
   customer: [
-    { href: '/dashboard/customer', label: 'Browse Meals', icon: 'storefront' },
-    { href: '/dashboard/customer#my-claims', label: 'My Claims', icon: 'shopping_bag' },
+    { href: '/dashboard/customer', label: 'Browse / Overview', icon: 'storefront' },
+    { href: '/dashboard/customer/orders', label: 'My Orders', icon: 'shopping_bag' },
+    { href: '/dashboard/customer/favorites', label: 'Favorites', icon: 'favorite' },
+    { href: '/dashboard/customer/profile', label: 'Profile', icon: 'person' },
+    { href: '/dashboard/customer/settings', label: 'Settings', icon: 'settings' },
   ],
   restaurant: [
     { href: '/dashboard/restaurant', label: 'Overview', icon: 'grid_view' },
-    { href: '/dashboard/restaurant#active-shares', label: 'Active Shares', icon: 'takeout_dining' },
-    { href: '/dashboard/restaurant#claims-history', label: 'Incoming Claims', icon: 'history' },
+    { href: '/dashboard/restaurant', label: 'Listings', icon: 'takeout_dining' },
+    { href: '/dashboard/restaurant/orders', label: 'Orders', icon: 'receipt_long' },
+    { href: '/dashboard/restaurant/donations', label: 'Donations', icon: 'volunteer_activism' },
+    { href: '/dashboard/restaurant/analytics', label: 'Analytics', icon: 'analytics' },
+    { href: '/dashboard/restaurant/reviews', label: 'Reviews', icon: 'star' },
+    { href: '/dashboard/restaurant/profile', label: 'Profile', icon: 'person' },
+    { href: '/dashboard/restaurant/settings', label: 'Settings', icon: 'settings' },
   ],
   food_donor: [
     { href: '/dashboard/donor', label: 'Overview', icon: 'grid_view' },
-    { href: '/dashboard/donor#active-donations', label: 'Active Donations', icon: 'featured_seasonal_and_gifts' },
+    { href: '/dashboard/donor', label: 'My Donations', icon: 'featured_seasonal_and_gifts' },
+    { href: '/dashboard/donor/nearby-ngos', label: 'Nearby NGOs', icon: 'handshake' },
+    { href: '/dashboard/donor/profile', label: 'Profile', icon: 'person' },
+    { href: '/dashboard/donor/settings', label: 'Settings', icon: 'settings' },
   ],
   ngo: [
-    { href: '/dashboard/ngo', label: 'Surplus Feed', icon: 'rss_feed' },
-    { href: '/dashboard/ngo#accepted-allocations', label: 'My Allocations', icon: 'assignment_turned_in' },
+    { href: '/dashboard/ngo', label: 'Overview', icon: 'grid_view' },
+    { href: '/dashboard/ngo', label: 'Incoming Requests', icon: 'rss_feed' },
+    { href: '/dashboard/ngo/claim-history', label: 'Claim History', icon: 'history' },
+    { href: '/dashboard/ngo/profile', label: 'Profile', icon: 'person' },
+    { href: '/dashboard/ngo/settings', label: 'Settings', icon: 'settings' },
   ],
   admin: [
-    { href: '/dashboard/admin', label: 'Verification Queue', icon: 'how_to_reg' },
-    { href: '/dashboard/admin#analytics', label: 'Analytics', icon: 'analytics' },
-    { href: '/dashboard/admin#users', label: 'User Directory', icon: 'group' },
-    { href: '/dashboard/admin#audit', label: 'Audit Logs', icon: 'shield' },
+    { href: '/dashboard/admin', label: 'Overview', icon: 'grid_view' },
+    { href: '/dashboard/admin/verify-restaurants', label: 'Verify Restaurants', icon: 'restaurant' },
+    { href: '/dashboard/admin/verify-ngos', label: 'Verify NGOs/Trusts', icon: 'handshake' },
+    { href: '/dashboard/admin/manage-users', label: 'Manage Users', icon: 'group' },
+    { href: '/dashboard/admin/reports', label: 'Reports', icon: 'bug_report' },
+    { href: '/dashboard/admin/contact-messages', label: 'Contact Messages', icon: 'mail' },
+    { href: '/dashboard/admin/analytics', label: 'Analytics', icon: 'analytics' },
+    { href: '/dashboard/admin/settings', label: 'Settings', icon: 'settings' },
   ],
 };
 
@@ -139,8 +157,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        {/* Verification Status Banner if pending */}
-        {user && user.verified_status === 'pending' && (
+        {/* Issue 7: Verification Banner — only for restaurant/ngo, NEVER admin */}
+        {user && user.verified_status === 'pending' && role !== 'admin' && (
           <div className="bg-tertiary-container/40 text-on-tertiary-container px-6 py-2.5 text-xs font-bold flex items-center justify-between border-b border-tertiary/20">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">hourglass_top</span>
