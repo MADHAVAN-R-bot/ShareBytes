@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { FoodListing } from '@/lib/types';
 
@@ -11,6 +11,32 @@ interface ListingCardProps {
   actionText?: string;
   isOwner?: boolean;
   onDelete?: (id: string) => void;
+  /** Pass the viewer's role so the card can show/lock NGO priority window */
+  viewerRole?: string;
+}
+
+function useNgoPriorityCountdown(ngo_priority_until?: string) {
+  const [secsLeft, setSecsLeft] = useState(0);
+
+  useEffect(() => {
+    if (!ngo_priority_until) return;
+    const tick = () => {
+      const s = Math.max(0, Math.ceil((new Date(ngo_priority_until).getTime() - Date.now()) / 1000));
+      setSecsLeft(s);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [ngo_priority_until]);
+
+  return secsLeft;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return '';
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 export default function ListingCard({
@@ -20,8 +46,16 @@ export default function ListingCard({
   actionText = 'Claim Meal',
   isOwner = false,
   onDelete,
+  viewerRole,
 }: ListingCardProps) {
   const isVeg = listing.food_type === 'veg';
+  const secsLeft = useNgoPriorityCountdown(listing.ngo_priority_until);
+
+  const ngoPriorityActive = Boolean(
+    listing.is_donation_only && listing.ngo_priority_until && secsLeft > 0
+  );
+  const isViewerNgo = viewerRole === 'ngo';
+  const isLockedForViewer = ngoPriorityActive && !isViewerNgo && !isOwner;
 
   return (
     <div className="bg-surface-container-lowest rounded-2xl p-5 shadow-sm border border-[#e1bfb5]/40 flex flex-col justify-between h-full transition-all duration-200 hover:shadow-md hover:-translate-y-0.5">
@@ -36,7 +70,7 @@ export default function ListingCard({
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
           />
 
-          {/* Top Left Veg/Non-Veg Badge */}
+          {/* Top Left Veg/Non-Veg + Donation Badge */}
           <div className="absolute top-3 left-3 flex items-center gap-2">
             <span
               className={`px-2.5 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-1.5 ${
@@ -63,11 +97,26 @@ export default function ListingCard({
             {listing.delivery_available ? 'Delivery Available' : 'Pickup Only'}
           </div>
 
-          {/* Bottom Countdown Badge */}
-          <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-            <span className="material-symbols-outlined text-[14px] text-tertiary">schedule</span>
-            <span>Expiring Today</span>
-          </div>
+          {/* Bottom: NGO Priority Countdown OR Expiry badge */}
+          {ngoPriorityActive ? (
+            <div className={`absolute bottom-3 left-3 right-3 text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${
+              isViewerNgo
+                ? 'bg-[#006c49] text-white'
+                : 'bg-amber-600/90 backdrop-blur-md text-white'
+            }`}>
+              <span className="material-symbols-outlined text-[14px]">
+                {isViewerNgo ? 'verified' : 'lock_clock'}
+              </span>
+              {isViewerNgo
+                ? `NGO Priority: ${formatCountdown(secsLeft)} left`
+                : `NGO window — ${formatCountdown(secsLeft)} left`}
+            </div>
+          ) : (
+            <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px] text-tertiary">schedule</span>
+              <span>Expiring Today</span>
+            </div>
+          )}
         </div>
 
         {/* Creator Info */}
@@ -127,6 +176,16 @@ export default function ListingCard({
                   </button>
                 )}
               </div>
+            ) : isLockedForViewer ? (
+              /* Locked during NGO priority window */
+              <button
+                disabled
+                className="w-full py-3 rounded-full bg-amber-100 text-amber-700 font-bold text-sm border border-amber-200 flex items-center justify-center gap-2 cursor-not-allowed"
+                title={`NGO priority active — ${formatCountdown(secsLeft)} remaining`}
+              >
+                <span className="material-symbols-outlined text-[18px]">lock_clock</span>
+                <span>NGO priority — {formatCountdown(secsLeft)} left</span>
+              </button>
             ) : (
               <button
                 onClick={() => onClaim && onClaim(listing)}

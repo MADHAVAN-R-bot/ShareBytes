@@ -9,7 +9,7 @@ import { DataService } from '@/lib/services/dataService';
 import { FoodListing, FoodClaim } from '@/lib/types';
 
 export default function CustomerDashboard() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const [listings, setListings] = useState<FoodListing[]>([]);
   const [myClaims, setMyClaims] = useState<FoodClaim[]>([]);
   const [selectedListing, setSelectedListing] = useState<FoodListing | null>(null);
@@ -151,11 +151,12 @@ export default function CustomerDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredListings.map(l => (
                 <ListingCard
-                  key={l.id}
-                  listing={l}
-                  onClaim={handleClaimClick}
-                  actionText="Claim Discounted Meal"
-                />
+                    key={l.id}
+                    listing={l}
+                    onClaim={handleClaimClick}
+                    actionText="Claim Discounted Meal"
+                    viewerRole={role}
+                  />
               ))}
             </div>
           )}

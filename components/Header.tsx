@@ -3,10 +3,12 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
 export default function Header() {
   const { user, role, logout } = useAuth();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navLinks = [
@@ -64,7 +66,7 @@ export default function Header() {
                 Dashboard
               </Link>
               <button
-                onClick={logout}
+                onClick={() => logout(() => router.push('/auth?tab=login'))}
                 className="w-9 h-9 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-primary transition-colors"
                 title="Log Out"
               >

@@ -3,7 +3,7 @@ export type VerificationStatus = 'pending' | 'verified' | 'rejected';
 export type FoodType = 'veg' | 'non_veg';
 export type ListingStatus = 'available' | 'claimed' | 'completed' | 'cancelled';
 export type ClaimStatus = 'pending' | 'accepted' | 'declined' | 'completed' | 'cancelled';
-export type PaymentMethod = 'cash_on_pickup' | 'cash_on_delivery';
+export type PaymentMethod = 'cash_on_pickup' | 'cash_on_delivery' | 'online';
 
 export interface UserProfile {
   id: string;
@@ -25,6 +25,7 @@ export interface UserProfile {
   fssai_number?: string;
   cuisine_type?: string;
   org_registration_number?: string;
+  is_suspended?: boolean;
 }
 
 export interface FoodListing {
@@ -37,6 +38,7 @@ export interface FoodListing {
   discounted_price: number;
   is_donation_only: boolean;
   expiry_time: string;
+  ngo_priority_until?: string; // ISO timestamp: NGO-only claim window ends at this time
   delivery_available: boolean;
   pickup_location: string;
   image_url: string;
@@ -46,6 +48,7 @@ export interface FoodListing {
   created_at: string;
   creator_name?: string;
   creator_business?: string;
+  event_type?: string;
 }
 
 export interface FoodClaim {

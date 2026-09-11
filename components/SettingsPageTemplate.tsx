@@ -2,6 +2,7 @@
 
 import React from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 
@@ -33,6 +34,7 @@ function SettingsRow({ icon, label, desc, action }: { icon: string; label: strin
 
 export default function SettingsPage({ roleLabel, profileHref }: { roleLabel: string; profileHref: string }) {
   const { logout } = useAuth();
+  const router = useRouter();
 
   return (
     <DashboardLayout>
@@ -57,7 +59,7 @@ export default function SettingsPage({ roleLabel, profileHref }: { roleLabel: st
         </SettingsSection>
 
         <SettingsSection title="Danger Zone">
-          <SettingsRow icon="logout" label="Log Out" desc="Sign out of your current session" action={<button onClick={logout} className="px-4 py-1.5 rounded-full bg-[#ffdad6] text-[#93000a] text-xs font-bold hover:opacity-80">Log Out</button>} />
+          <SettingsRow icon="logout" label="Log Out" desc="Sign out of your current session" action={<button onClick={() => logout(() => router.push('/auth?tab=login'))} className="px-4 py-1.5 rounded-full bg-[#ffdad6] text-[#93000a] text-xs font-bold hover:opacity-80">Log Out</button>} />
         </SettingsSection>
       </div>
     </DashboardLayout>

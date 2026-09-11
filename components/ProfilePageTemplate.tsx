@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/lib/types';
+import ChangePasswordCard from '@/components/ChangePasswordCard';
 
 interface ProfileField {
   key: string;
@@ -187,7 +188,11 @@ export default function ProfilePageTemplate({ title, subtitle, extraFields = [],
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
         </form>
+
+        {/* Change Password Section */}
+        <ChangePasswordCard />
       </div>
     </DashboardLayout>
   );
 }
+

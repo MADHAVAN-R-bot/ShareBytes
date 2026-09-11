@@ -106,6 +106,7 @@ export const initialListings: FoodListing[] = [
     discounted_price: 90,
     is_donation_only: false,
     expiry_time: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+    ngo_priority_until: new Date(Date.now() + 45 * 60 * 1000).toISOString(), // 45 min left
     delivery_available: true,
     pickup_location: 'Golden Harvest Bakery, 42 MG Road, Downtown Chennai',
     image_url: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=600&auto=format&fit=crop&q=60',
@@ -126,6 +127,7 @@ export const initialListings: FoodListing[] = [
     discounted_price: 0,
     is_donation_only: true,
     expiry_time: new Date(Date.now() + 3 * 3600 * 1000).toISOString(),
+    ngo_priority_until: new Date(Date.now() + 55 * 60 * 1000).toISOString(), // 55 min left
     delivery_available: true,
     pickup_location: 'Anand Caterers, 15 Grand Hall Road, Velachery',
     image_url: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=600&auto=format&fit=crop&q=60',

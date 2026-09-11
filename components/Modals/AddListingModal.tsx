@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { DataService } from '@/lib/services/dataService';
 import { FoodType } from '@/lib/types';
+import NumericInput from '@/components/NumericInput';
 
 interface AddListingModalProps {
   isOpen: boolean;
@@ -14,13 +15,21 @@ interface AddListingModalProps {
 export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListingModalProps) {
   const { user, role, showToast } = useAuth();
 
-  const [isDonationOnly, setIsDonationOnly] = useState(role === 'food_donor');
+  const isDonorRole = role === 'food_donor';
+  const [isDonationOnly, setIsDonationOnly] = useState(isDonorRole); // Donors always donate
   const [foodType, setFoodType] = useState<FoodType>('veg');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [portionCount, setPortionCount] = useState(10);
-  const [originalPrice, setOriginalPrice] = useState(250);
-  const [discountedPrice, setDiscountedPrice] = useState(60);
+  const [portionCount, setPortionCount] = useState<number | string>(10);
+  const [originalPrice, setOriginalPrice] = useState<number | string>(250);
+  const [discountedPrice, setDiscountedPrice] = useState<number | string>(60);
+  const getMinExpiryISO = () => {
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    return d.toISOString().slice(0, 16);
+  };
+
+  const [expiryTime, setExpiryTime] = useState<string>(() => getMinExpiryISO());
   const [deliveryAvailable, setDeliveryAvailable] = useState(true);
   const [pickupLocation, setPickupLocation] = useState(user?.address || 'Chennai Central Hub');
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -28,6 +37,12 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
+
+  const numPortions = Number(portionCount);
+  const isPortionInvalid = portionCount === '' || isNaN(numPortions) || numPortions < 1;
+  const isPriceInvalid = !isDonationOnly && originalPrice !== '' && discountedPrice !== '' && Number(discountedPrice) >= Number(originalPrice);
+  const selectedExpiryMs = expiryTime ? new Date(expiryTime).getTime() : 0;
+  const isExpiryInvalid = !expiryTime || isNaN(selectedExpiryMs) || selectedExpiryMs < Date.now() + 59 * 60 * 1000;
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -47,6 +62,18 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
       showToast('Please enter a listing title', 'error');
       return;
     }
+    if (isPortionInvalid) {
+      showToast('Portions must be at least 1.', 'error');
+      return;
+    }
+    if (isPriceInvalid) {
+      showToast('Discounted price should be lower than the original price.', 'error');
+      return;
+    }
+    if (isExpiryInvalid) {
+      showToast('Expiry time must be at least 1 hour from now.', 'error');
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -59,11 +86,11 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
         title,
         description,
         food_type: foodType,
-        portion_count: Number(portionCount),
+        portion_count: numPortions,
         original_price: isDonationOnly ? 0 : Number(originalPrice),
         discounted_price: isDonationOnly ? 0 : Number(discountedPrice),
         is_donation_only: isDonationOnly,
-        expiry_time: new Date(Date.now() + 6 * 3600 * 1000).toISOString(),
+        expiry_time: new Date(expiryTime).toISOString(),
         delivery_available: deliveryAvailable,
         pickup_location: pickupLocation,
         image_url: imagePreview || defaultImg,
@@ -100,29 +127,39 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5 pt-4">
-          {/* Sell vs Donate Toggle */}
-          <div className="bg-surface-container-low p-2 rounded-2xl flex gap-2">
-            <button
-              type="button"
-              onClick={() => setIsDonationOnly(false)}
-              className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                !isDonationOnly ? 'bg-primary text-white shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">sell</span>
-              Sell at Discount (Customers + NGOs)
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsDonationOnly(true)}
-              className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                isDonationOnly ? 'bg-[#006c49] text-white shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
-              Donate Free (NGOs Only)
-            </button>
-          </div>
+          {/* Sell vs Donate Toggle — only shown for Restaurants; Donors always donate for free */}
+          {isDonorRole ? (
+            <div className="bg-[#eaf4ee] p-3 rounded-2xl flex items-center gap-3 border border-[#6ffbbe]/40">
+              <span className="material-symbols-outlined text-[#005236] text-[22px]">volunteer_activism</span>
+              <div>
+                <p className="text-xs font-bold text-[#005236]">Donation Only — always free for NGOs</p>
+                <p className="text-[11px] text-[#005236]/70">Food Donors can only post free surplus. The pickup address below is required per listing.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-surface-container-low p-2 rounded-2xl flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDonationOnly(false)}
+                className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  !isDonationOnly ? 'bg-primary text-white shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">sell</span>
+                Sell at Discount (Customers + NGOs)
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsDonationOnly(true)}
+                className={`flex-1 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  isDonationOnly ? 'bg-[#006c49] text-white shadow-sm' : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
+                Donate Free (NGOs Only)
+              </button>
+            </div>
+          )}
 
           {/* Title */}
           <div>
@@ -180,15 +217,17 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">Portions (Meals)</label>
-              <input
-                type="number"
+              <label className="block text-xs font-bold text-on-surface mb-1">Portions (Meals) *</label>
+              <NumericInput
                 min={1}
                 required
                 value={portionCount}
-                onChange={e => setPortionCount(Number(e.target.value))}
+                onChange={val => setPortionCount(val)}
                 className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary"
               />
+              {isPortionInvalid && (
+                <p className="text-[11px] text-red-500 font-medium mt-1">Portions must be at least 1.</p>
+              )}
             </div>
           </div>
 
@@ -197,26 +236,47 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold text-on-surface mb-1">Original Price (₹)</label>
-                <input
-                  type="number"
+                <NumericInput
                   min={0}
                   value={originalPrice}
-                  onChange={e => setOriginalPrice(Number(e.target.value))}
+                  onChange={val => setOriginalPrice(val)}
                   className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div>
                 <label className="block text-xs font-bold text-on-surface mb-1">Discounted Price (₹)</label>
-                <input
-                  type="number"
+                <NumericInput
                   min={0}
                   value={discountedPrice}
-                  onChange={e => setDiscountedPrice(Number(e.target.value))}
+                  onChange={val => setDiscountedPrice(val)}
                   className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary text-primary"
                 />
+                {isPriceInvalid && (
+                  <p className="text-[11px] text-red-500 font-medium mt-1">
+                    Discounted price should be lower than the original price.
+                  </p>
+                )}
               </div>
             </div>
           )}
+
+          {/* Expiry Time Picker */}
+          <div>
+            <label className="block text-xs font-bold text-on-surface mb-1">Expiry Time *</label>
+            <input
+              type="datetime-local"
+              required
+              min={getMinExpiryISO()}
+              value={expiryTime}
+              onChange={e => setExpiryTime(e.target.value)}
+              className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {isExpiryInvalid && (
+              <p className="text-[11px] text-red-500 font-medium mt-1">
+                Expiry time must be at least 1 hour from now.
+              </p>
+            )}
+          </div>
 
           {/* Pickup & Delivery */}
           <div>
@@ -254,8 +314,12 @@ export default function AddListingModal({ isOpen, onClose, onSuccess }: AddListi
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="flex-1 py-3 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
+              disabled={isSubmitting || isPriceInvalid || isPortionInvalid || isExpiryInvalid}
+              className={`flex-1 py-3 rounded-full font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 ${
+                isPriceInvalid || isPortionInvalid || isExpiryInvalid
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-primary hover:bg-primary-dark text-white'
+              }`}
             >
               <span className="material-symbols-outlined text-[18px]">publish</span>
               <span>{isSubmitting ? 'Publishing...' : 'Publish Listing'}</span>

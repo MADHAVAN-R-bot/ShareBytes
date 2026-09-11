@@ -61,6 +61,18 @@ export default function MarketplacePage() {
                 </button>
               ))}
             </div>
+            {(searchQuery.trim() !== '' || vegFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setVegFilter('all');
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+                Clear Filters
+              </button>
+            )}
             <span className="text-xs text-on-surface-variant font-medium ml-auto">{filtered.length} listings available</span>
           </div>
         </section>

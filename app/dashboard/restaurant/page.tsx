@@ -81,8 +81,20 @@ export default function RestaurantDashboard() {
           </div>
 
           <button
-            onClick={() => setIsAddModalOpen(true)}
-            className="h-12 px-6 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-lg shadow-primary/25 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
+            onClick={() => {
+              if (user?.verified_status !== 'verified') {
+                showToast('Your account must be verified by Admin before you can list food.', 'error');
+                return;
+              }
+              setIsAddModalOpen(true);
+            }}
+            disabled={user?.verified_status !== 'verified'}
+            title={user?.verified_status !== 'verified' ? 'Your account must be verified before you can list food' : ''}
+            className={`h-12 px-6 rounded-full font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
+              user?.verified_status !== 'verified'
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                : 'bg-primary hover:bg-primary-dark text-white shadow-primary/25 hover:scale-[1.02]'
+            }`}
           >
             <span className="material-symbols-outlined text-[20px]">add_circle</span>
             <span>+ Add Food Listing</span>

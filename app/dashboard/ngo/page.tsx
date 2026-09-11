@@ -157,6 +157,7 @@ export default function NGODashboard() {
                   listing={l}
                   onClaim={handleClaimClick}
                   actionText="Reserve for NGO"
+                  viewerRole="ngo"
                 />
               ))}
             </div>

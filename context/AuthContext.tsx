@@ -4,6 +4,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, UserRole } from '@/lib/types';
 import { DataService } from '@/lib/services/dataService';
 
+import { parseSupabaseError } from '@/lib/supabase/error';
+
 interface ToastState {
   id: string;
   type: 'success' | 'error' | 'info';
@@ -18,9 +20,11 @@ interface AuthContextType {
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   removeToast: (id: string) => void;
   login: (email: string, password: string, role?: UserRole) => Promise<boolean>;
+  sendPhoneOtp: (phone: string) => Promise<{ success: boolean; demoCode?: string }>;
+  verifyPhoneOtp: (phone: string, token: string, preferredRole?: UserRole) => Promise<boolean>;
   signup: (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string; password?: string }) => Promise<boolean>;
   switchRole: (newRole: UserRole) => void;
-  logout: () => void;
+  logout: (redirect?: () => void) => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => void;
 }
 
@@ -61,16 +65,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (activeUser) {
       setUser(activeUser);
       setRole(activeUser.role);
+      if (typeof document !== 'undefined') {
+        document.cookie = `sb_role=${activeUser.role}; path=/; max-age=86400`;
+      }
     }
     setIsLoading(false);
   }, []);
 
   /**
-   * Issue 1 Fix: login() now requires BOTH email AND password.
+   * login() requires BOTH email AND password.
    * - Validates password is not empty and meets minimum length
-   * - Attempts supabase.auth.signInWithPassword if real env vars are set
+   * - Attempts supabase.auth.signInWithPassword if real env vars are set with robust error handling
    * - Falls back to local demo-mode check that verifies stored password hash
-   * - NEVER auto-succeeds on email alone
    */
   const login = async (email: string, password: string, preferredRole?: UserRole): Promise<boolean> => {
     // ── Step 1: Validate inputs ──────────────────────────────────────────────
@@ -96,28 +102,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { createClient } = await import('@/lib/supabase/client');
         const supabase = createClient();
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        
         if (error) {
-          showToast(error.message || 'Invalid email or password', 'error');
+          showToast(parseSupabaseError(error, 'Invalid email or password'), 'error');
           return false;
         }
+
         if (data.user) {
           const profiles = DataService.getProfiles();
           const matchedUser = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
           if (matchedUser) {
+            if (matchedUser.is_suspended) {
+              showToast('Your account has been suspended by Admin. Please contact support.', 'error');
+              return false;
+            }
             setUser(matchedUser);
             setRole(matchedUser.role);
             if (typeof window !== 'undefined') {
               localStorage.setItem('sb_active_user_id', matchedUser.id);
+              document.cookie = `sb_role=${matchedUser.role}; path=/; max-age=86400`;
             }
             showToast(`Welcome back, ${matchedUser.full_name || matchedUser.email}!`, 'success');
             return true;
           }
+
+          // Fallback profile construction from Supabase User Metadata if local storage miss
+          const roleFromMeta = (data.user.user_metadata?.role as UserRole) || preferredRole || 'customer';
+          const newUserProfile: UserProfile = {
+            id: data.user.id,
+            email: data.user.email || email,
+            role: roleFromMeta,
+            full_name: data.user.user_metadata?.full_name || email.split('@')[0],
+            phone: data.user.user_metadata?.phone || '',
+            business_name: data.user.user_metadata?.business_name || '',
+            address: data.user.user_metadata?.address || 'Chennai, Tamil Nadu',
+            fssai_cert_url: data.user.user_metadata?.fssai_cert_url || '',
+            registration_cert_url: data.user.user_metadata?.registration_cert_url || '',
+            entity_photo_url: data.user.user_metadata?.entity_photo_url || '',
+            verified_status: roleFromMeta === 'restaurant' || roleFromMeta === 'ngo' ? 'pending' : 'verified',
+            created_at: new Date().toISOString(),
+          };
+          DataService.saveProfile(newUserProfile);
+          setUser(newUserProfile);
+          setRole(newUserProfile.role);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('sb_active_user_id', newUserProfile.id);
+            document.cookie = `sb_role=${newUserProfile.role}; path=/; max-age=86400`;
+          }
+          showToast(`Welcome back, ${newUserProfile.full_name || newUserProfile.email}!`, 'success');
+          return true;
         }
       }
 
       // ── Step 3: Demo-mode fallback ────────────────────────────────────────
-      // In demo mode we do NOT auto-create accounts on login — only on signup.
-      // We verify the stored password (or accept any password ≥ MIN length for seeded demo accounts).
       const profiles = DataService.getProfiles();
       const matchedUser = profiles.find(p => p.email.toLowerCase() === email.toLowerCase());
 
@@ -126,7 +163,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      // Check stored password (demo accounts have a stored password or use default 'demo1234')
+      if (matchedUser.is_suspended) {
+        showToast('Your account has been suspended by Admin. Please contact support.', 'error');
+        return false;
+      }
+
       const storedPassword = matchedUser.demo_password || 'demo1234';
       if (password !== storedPassword) {
         showToast('Incorrect password. Please try again.', 'error');
@@ -137,36 +178,213 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(matchedUser.role);
       if (typeof window !== 'undefined') {
         localStorage.setItem('sb_active_user_id', matchedUser.id);
+        document.cookie = `sb_role=${matchedUser.role}; path=/; max-age=86400`;
       }
       showToast(`Welcome back, ${matchedUser.full_name || matchedUser.email}!`, 'success');
       return true;
     } catch (err: any) {
-      showToast(err.message || 'Login failed', 'error');
+      showToast(parseSupabaseError(err, 'Login failed'), 'error');
       return false;
     } finally {
       setIsLoading(false);
     }
   };
 
+  const sendPhoneOtp = async (phone: string): Promise<{ success: boolean; demoCode?: string }> => {
+    const cleanPhone = phone.trim();
+    if (!cleanPhone || cleanPhone.length < 8) {
+      showToast('Please enter a valid mobile phone number with country code (e.g. +91 9876543210)', 'error');
+      return { success: false };
+    }
+
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { error } = await supabase.auth.signInWithOtp({ phone: cleanPhone });
+        if (error) {
+          showToast(parseSupabaseError(error, 'Failed to send OTP'), 'error');
+          return { success: false };
+        }
+        showToast(`Verification code sent via SMS to ${cleanPhone}`, 'success');
+        return { success: true };
+      } else {
+        const demoCode = '123456';
+        showToast(`[DEMO MODE] Verification code sent to ${cleanPhone}. Demo OTP: ${demoCode}`, 'info');
+        return { success: true, demoCode };
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send OTP code', 'error');
+      return { success: false };
+    }
+  };
+
+  const verifyPhoneOtp = async (phone: string, token: string, preferredRole?: UserRole): Promise<boolean> => {
+    const cleanPhone = phone.trim();
+    const cleanToken = token.trim();
+    if (!cleanToken || cleanToken.length < 4) {
+      showToast('Please enter the 6-digit verification code', 'error');
+      return false;
+    }
+
+    setIsLoading(true);
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.verifyOtp({ phone: cleanPhone, token: cleanToken, type: 'sms' });
+        if (error) {
+          showToast(parseSupabaseError(error, 'Invalid or expired OTP code'), 'error');
+          setIsLoading(false);
+          return false;
+        }
+
+        if (data.user) {
+          const profiles = DataService.getProfiles();
+          const matchedUser = profiles.find(p => p.phone && p.phone.replace(/\s+/g, '') === cleanPhone.replace(/\s+/g, ''));
+          if (matchedUser) {
+            if (matchedUser.is_suspended) {
+              showToast('Your account has been suspended by Admin. Please contact support.', 'error');
+              setIsLoading(false);
+              return false;
+            }
+            setUser(matchedUser);
+            setRole(matchedUser.role);
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('sb_active_user_id', matchedUser.id);
+              document.cookie = `sb_role=${matchedUser.role}; path=/; max-age=86400`;
+            }
+            showToast(`Logged in successfully as ${matchedUser.full_name || cleanPhone}`, 'success');
+            setIsLoading(false);
+            return true;
+          }
+        }
+      }
+
+      // Fallback / Demo mode verification
+      if (cleanToken !== '123456' && cleanToken !== '654321' && cleanToken !== '000000') {
+        showToast('Invalid OTP code. Try entering 123456 in demo mode.', 'error');
+        setIsLoading(false);
+        return false;
+      }
+
+      const profiles = DataService.getProfiles();
+      const digits = cleanPhone.replace(/\D/g, '');
+      let matchedUser = profiles.find(p => p.phone && p.phone.replace(/\D/g, '').includes(digits.slice(-10)));
+
+      if (matchedUser) {
+        if (matchedUser.is_suspended) {
+          showToast('Your account has been suspended by Admin. Please contact support.', 'error');
+          setIsLoading(false);
+          return false;
+        }
+      } else {
+        const targetRole = preferredRole || 'customer';
+        matchedUser = {
+          id: `usr-mobile-${Date.now()}`,
+          email: `${digits || 'mobile'}@phone.sharebytes.org`,
+          phone: cleanPhone,
+          full_name: `User (${cleanPhone})`,
+          role: targetRole,
+          verified_status: targetRole === 'restaurant' || targetRole === 'ngo' ? 'pending' : 'verified',
+          created_at: new Date().toISOString(),
+        };
+        DataService.saveProfile(matchedUser);
+      }
+
+      setUser(matchedUser);
+      setRole(matchedUser.role);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sb_active_user_id', matchedUser.id);
+        document.cookie = `sb_role=${matchedUser.role}; path=/; max-age=86400`;
+      }
+      showToast(`Phone verified! Welcome ${matchedUser.full_name}!`, 'success');
+      setIsLoading(false);
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'OTP verification failed', 'error');
+      setIsLoading(false);
+      return false;
+    }
+  };
+
   const signup = async (data: Partial<UserProfile> & { role: UserRole; email: string; full_name: string; password?: string }): Promise<boolean> => {
     setIsLoading(true);
     try {
-      // Validate password on signup too
+      const cleanEmail = data.email ? data.email.trim().toLowerCase() : '';
+      if (!cleanEmail || !cleanEmail.includes('@')) {
+        showToast('Please enter a valid email address', 'error');
+        return false;
+      }
+
       if (!data.password || data.password.trim().length < MIN_DEMO_PASSWORD_LENGTH) {
         showToast(`Password must be at least ${MIN_DEMO_PASSWORD_LENGTH} characters`, 'error');
         return false;
       }
 
-      // Check for duplicate email
-      const existing = DataService.getProfiles().find(p => p.email.toLowerCase() === data.email.toLowerCase());
-      if (existing) {
-        showToast('An account with this email already exists. Please log in.', 'error');
-        return false;
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+      let assignedId = `usr-${Date.now()}`;
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: sbData, error: sbError } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: data.password,
+          options: {
+            data: {
+              role: data.role,
+              full_name: data.full_name,
+              phone: data.phone || '',
+              business_name: data.business_name || data.full_name,
+              address: data.address || '',
+              fssai_cert_url: data.fssai_cert_url || '',
+              registration_cert_url: data.registration_cert_url || '',
+              entity_photo_url: data.entity_photo_url || '',
+              fssai_number: data.fssai_number || '',
+              org_registration_number: data.org_registration_number || '',
+            },
+          },
+        });
+
+        if (sbError) {
+          showToast(parseSupabaseError(sbError, 'Signup failed'), 'error');
+          return false;
+        }
+
+        if (sbData.user) {
+          assignedId = sbData.user.id;
+          if (!sbData.session) {
+            showToast('Account created! Please check your email to confirm your account before logging in.', 'info');
+          }
+        }
+      } else {
+        const existing = DataService.getProfiles().find(p => p.email.toLowerCase() === cleanEmail);
+        if (existing) {
+          showToast('An account with this email already exists. Please log in.', 'error');
+          return false;
+        }
       }
 
       const newProfile: UserProfile = {
-        id: `usr-${Date.now()}`,
-        email: data.email,
+        id: assignedId,
+        email: cleanEmail,
         role: data.role,
         full_name: data.full_name,
         phone: data.phone || '',
@@ -175,6 +393,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fssai_cert_url: data.fssai_cert_url || '',
         registration_cert_url: data.registration_cert_url || '',
         entity_photo_url: data.entity_photo_url || '',
+        fssai_number: data.fssai_number || '',
+        org_registration_number: data.org_registration_number || '',
         verified_status: data.role === 'restaurant' || data.role === 'ngo' ? 'pending' : 'verified',
         created_at: new Date().toISOString(),
         demo_password: data.password,
@@ -186,6 +406,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (typeof window !== 'undefined') {
         localStorage.setItem('sb_active_user_id', newProfile.id);
+        document.cookie = `sb_role=${newProfile.role}; path=/; max-age=86400`;
       }
 
       if (newProfile.verified_status === 'pending') {
@@ -195,7 +416,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return true;
     } catch (err: any) {
-      showToast(err.message || 'Signup failed', 'error');
+      showToast(parseSupabaseError(err, 'Signup failed'), 'error');
       return false;
     } finally {
       setIsLoading(false);
@@ -210,23 +431,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setRole(matched.role);
       if (typeof window !== 'undefined') {
         localStorage.setItem('sb_active_user_id', matched.id);
+        document.cookie = `sb_role=${matched.role}; path=/; max-age=86400`;
       }
       showToast(`Switched active role to ${newRole.toUpperCase()} (${matched.full_name})`, 'info');
     } else if (user) {
       const updatedUser = { ...user, role: newRole };
       setUser(updatedUser);
       setRole(newRole);
+      if (typeof window !== 'undefined') {
+        document.cookie = `sb_role=${newRole}; path=/; max-age=86400`;
+      }
       showToast(`Role set to ${newRole.toUpperCase()}`, 'info');
     }
   };
 
-  const logout = () => {
+  const logout = async (redirect?: () => void) => {
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.warn('Supabase signOut error:', parseSupabaseError(error));
+        }
+      }
+    } catch (err: any) {
+      console.warn('SignOut exception:', parseSupabaseError(err));
+    }
     setUser(null);
     setRole('customer');
     if (typeof window !== 'undefined') {
       localStorage.removeItem('sb_active_user_id');
+      document.cookie = `sb_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
     }
     showToast('Logged out successfully', 'info');
+    // Redirect to login page after state is cleared
+    if (redirect) redirect();
   };
 
   const updateProfile = (updates: Partial<UserProfile>) => {
@@ -250,6 +496,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         showToast,
         removeToast,
         login,
+        sendPhoneOtp,
+        verifyPhoneOtp,
         signup,
         switchRole,
         logout,

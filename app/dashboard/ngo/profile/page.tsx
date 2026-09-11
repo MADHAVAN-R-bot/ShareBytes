@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { useAuth } from '@/context/AuthContext';
+import ChangePasswordCard from '@/components/ChangePasswordCard';
 
 export default function NGOProfilePage() {
   const { user, updateProfile, showToast } = useAuth();
@@ -89,6 +90,8 @@ export default function NGOProfilePage() {
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
         </form>
+
+        <ChangePasswordCard />
       </div>
     </DashboardLayout>
   );

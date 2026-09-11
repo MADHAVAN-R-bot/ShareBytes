@@ -1,11 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { UserRole } from '@/lib/types';
+import { UserRole, UserNotification } from '@/lib/types';
+import { DataService } from '@/lib/services/dataService';
 
 interface SidebarLink {
   href: string;
@@ -15,35 +16,40 @@ interface SidebarLink {
 
 const roleLinks: Record<UserRole, SidebarLink[]> = {
   customer: [
-    { href: '/dashboard/customer', label: 'Browse / Overview', icon: 'storefront' },
+    { href: '/dashboard/customer', label: 'Overview / Browse', icon: 'storefront' },
     { href: '/dashboard/customer/orders', label: 'My Orders', icon: 'shopping_bag' },
+    { href: '/dashboard/customer/saved-addresses', label: 'Saved Addresses', icon: 'location_on' },
     { href: '/dashboard/customer/favorites', label: 'Favorites', icon: 'favorite' },
     { href: '/dashboard/customer/profile', label: 'Profile', icon: 'person' },
     { href: '/dashboard/customer/settings', label: 'Settings', icon: 'settings' },
+    { href: '/help', label: 'Help & Support', icon: 'help_outline' },
   ],
   restaurant: [
     { href: '/dashboard/restaurant', label: 'Overview', icon: 'grid_view' },
-    { href: '/dashboard/restaurant', label: 'Listings', icon: 'takeout_dining' },
+    { href: '/dashboard/restaurant/listings', label: 'Listings', icon: 'inventory' },
     { href: '/dashboard/restaurant/orders', label: 'Orders', icon: 'receipt_long' },
     { href: '/dashboard/restaurant/donations', label: 'Donations', icon: 'volunteer_activism' },
     { href: '/dashboard/restaurant/analytics', label: 'Analytics', icon: 'analytics' },
     { href: '/dashboard/restaurant/reviews', label: 'Reviews', icon: 'star' },
     { href: '/dashboard/restaurant/profile', label: 'Profile', icon: 'person' },
     { href: '/dashboard/restaurant/settings', label: 'Settings', icon: 'settings' },
+    { href: '/help', label: 'Help & Support', icon: 'help_outline' },
   ],
   food_donor: [
     { href: '/dashboard/donor', label: 'Overview', icon: 'grid_view' },
-    { href: '/dashboard/donor', label: 'My Donations', icon: 'featured_seasonal_and_gifts' },
+    { href: '/dashboard/donor/donations', label: 'My Donations', icon: 'volunteer_activism' },
     { href: '/dashboard/donor/nearby-ngos', label: 'Nearby NGOs', icon: 'handshake' },
     { href: '/dashboard/donor/profile', label: 'Profile', icon: 'person' },
     { href: '/dashboard/donor/settings', label: 'Settings', icon: 'settings' },
+    { href: '/help', label: 'Help & Support', icon: 'help_outline' },
   ],
   ngo: [
     { href: '/dashboard/ngo', label: 'Overview', icon: 'grid_view' },
-    { href: '/dashboard/ngo', label: 'Incoming Requests', icon: 'rss_feed' },
+    { href: '/dashboard/ngo/incoming', label: 'Incoming Requests', icon: 'inbox' },
     { href: '/dashboard/ngo/claim-history', label: 'Claim History', icon: 'history' },
     { href: '/dashboard/ngo/profile', label: 'Profile', icon: 'person' },
     { href: '/dashboard/ngo/settings', label: 'Settings', icon: 'settings' },
+    { href: '/help', label: 'Help & Support', icon: 'help_outline' },
   ],
   admin: [
     { href: '/dashboard/admin', label: 'Overview', icon: 'grid_view' },
@@ -53,14 +59,67 @@ const roleLinks: Record<UserRole, SidebarLink[]> = {
     { href: '/dashboard/admin/reports', label: 'Reports', icon: 'bug_report' },
     { href: '/dashboard/admin/contact-messages', label: 'Contact Messages', icon: 'mail' },
     { href: '/dashboard/admin/analytics', label: 'Analytics', icon: 'analytics' },
+    { href: '/dashboard/admin/profile', label: 'Admin Profile', icon: 'person' },
     { href: '/dashboard/admin/settings', label: 'Settings', icon: 'settings' },
   ],
 };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, role, switchRole, logout } = useAuth();
-  const links = roleLinks[role] || roleLinks.customer;
+  const router = useRouter();
+  const { user, role, logout } = useAuth();
+  const [notifOpen, setNotifOpen] = React.useState(false);
+  const [notifications, setNotifications] = React.useState<UserNotification[]>([]);
+
+  const loadNotifications = React.useCallback(() => {
+    if (!user) return;
+    const notifs = DataService.getNotifications(user.id);
+    setNotifications(notifs);
+  }, [user]);
+
+  React.useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications, pathname]);
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const handleNotifClick = (n: UserNotification) => {
+    DataService.markNotificationRead(n.id);
+    loadNotifications();
+    if (n.link) {
+      setNotifOpen(false);
+      router.push(n.link);
+    }
+  };
+
+  // Infer role from current URL path (e.g. /dashboard/admin/reports -> 'admin')
+  const pathSegment = pathname.split('/')[2];
+  const segmentToRoleMap: Record<string, UserRole> = {
+    admin: 'admin',
+    restaurant: 'restaurant',
+    donor: 'food_donor',
+    ngo: 'ngo',
+    customer: 'customer',
+  };
+  const pathRole = segmentToRoleMap[pathSegment];
+
+  // Determine active role priority:
+  // 1. Logged-in user's assigned role
+  // 2. Inferred role from URL path
+  // 3. Auth context role fallback
+  const activeRole: UserRole = user?.role || pathRole || role || 'customer';
+  const links = roleLinks[activeRole] || roleLinks.customer;
+
+  // Client-side route protection guard: prevent cross-role dashboard navigation leaks
+  useEffect(() => {
+    if (!user) return;
+    const userRoleSegment = user.role === 'food_donor' ? 'donor' : user.role;
+    if (pathSegment && ['admin', 'restaurant', 'donor', 'ngo', 'customer'].includes(pathSegment)) {
+      if (pathSegment !== userRoleSegment) {
+        router.replace(`/dashboard/${userRoleSegment}`);
+      }
+    }
+  }, [user, pathSegment, router]);
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -80,13 +139,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         <nav className="flex-1 space-y-1">
           <div className="px-3 py-1 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
-            {role.replace('_', ' ')} Portal
+            {activeRole.replace('_', ' ')} Portal
           </div>
-          {links.map(link => {
+          {links.map((link, idx) => {
             const isActive = pathname === link.href;
             return (
               <Link
-                key={link.href}
+                key={`${link.href}-${idx}`}
                 href={link.href}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-xs font-bold transition-all ${
                   isActive
@@ -108,7 +167,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <span className="material-symbols-outlined text-secondary text-[20px]">eco</span>
               <div>
                 <p className="text-[10px] font-bold uppercase text-on-surface-variant">Role Persona</p>
-                <p className="text-xs font-bold text-on-surface capitalize">{role.replace('_', ' ')}</p>
+                <p className="text-xs font-bold text-on-surface capitalize">{activeRole.replace('_', ' ')}</p>
               </div>
             </div>
           </div>
@@ -116,7 +175,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center justify-between px-2 text-xs font-bold text-on-surface-variant">
             <span className="truncate max-w-[120px]">{user?.full_name || user?.email}</span>
             <button
-              onClick={logout}
+              onClick={() => logout(() => router.push('/auth?tab=login'))}
               className="text-primary hover:underline flex items-center gap-1 text-[11px]"
             >
               Logout
@@ -134,12 +193,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Image src="/logo.png" alt="Logo" width={110} height={32} className="h-7 w-auto" />
             </Link>
             <span className="hidden sm:inline-block px-3 py-1 rounded-full bg-surface-container text-xs font-bold text-on-surface">
-              Role: <strong className="text-primary uppercase">{role.replace('_', ' ')}</strong>
+              Role: <strong className="text-primary uppercase">{activeRole.replace('_', ' ')}</strong>
             </span>
           </div>
 
-          {/* Quick Nav Links */}
-          <div className="flex items-center gap-3">
+          {/* Quick Nav Links + Notification Bell */}
+          <div className="flex items-center gap-4">
             <Link
               href="/"
               className="text-xs font-bold text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1"
@@ -154,11 +213,73 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <span className="material-symbols-outlined text-[16px]">storefront</span>
               Marketplace
             </Link>
+
+            {/* Notification Bell Icon & Popover Panel */}
+            <div className="relative">
+              <button
+                onClick={() => setNotifOpen(!notifOpen)}
+                className="w-9 h-9 rounded-full bg-surface-container hover:bg-surface-container-high flex items-center justify-center text-on-surface transition-colors relative"
+                title="Notifications"
+              >
+                <span className="material-symbols-outlined text-[20px]">notifications</span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-primary text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Popover Dropdown Panel */}
+              {notifOpen && (
+                <div className="absolute right-0 top-12 w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-[#e1bfb5]/40 z-50 overflow-hidden">
+                  <div className="p-4 bg-surface-container-low border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[20px]">notifications</span>
+                      <h3 className="text-sm font-bold text-on-surface">Notifications</h3>
+                    </div>
+                    {unreadCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">
+                        {unreadCount} new
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
+                    {notifications.length === 0 ? (
+                      <div className="p-8 text-center text-xs text-on-surface-variant font-medium">
+                        No notifications yet.
+                      </div>
+                    ) : (
+                      notifications.map(n => (
+                        <div
+                          key={n.id}
+                          onClick={() => handleNotifClick(n)}
+                          className={`p-4 hover:bg-surface-container-low cursor-pointer transition-colors space-y-1 ${
+                            !n.read ? 'bg-primary-fixed/20' : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-on-surface">{n.title}</span>
+                            {!n.read && (
+                              <span className="w-2 h-2 rounded-full bg-primary shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-[11px] text-on-surface-variant font-medium">{n.message}</p>
+                          <span className="text-[9px] text-on-surface-variant/70 block">
+                            {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
-        {/* Issue 7: Verification Banner — only for restaurant/ngo, NEVER admin */}
-        {user && user.verified_status === 'pending' && role !== 'admin' && (
+        {/* Verification Banner — only for restaurant/ngo, NEVER admin */}
+        {user && user.verified_status === 'pending' && activeRole !== 'admin' && (
           <div className="bg-tertiary-container/40 text-on-tertiary-container px-6 py-2.5 text-xs font-bold flex items-center justify-between border-b border-tertiary/20">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[18px]">hourglass_top</span>

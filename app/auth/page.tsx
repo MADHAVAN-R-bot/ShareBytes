@@ -43,12 +43,22 @@ function RoleCard({ role, selected, onSelect }: { role: typeof ROLES[0]; selecte
 function AuthContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { login, signup, showToast } = useAuth();
+  const { login, sendPhoneOtp, verifyPhoneOtp, signup, showToast } = useAuth();
 
   const [authTab, setAuthTab] = useState<'signup' | 'login'>('signup');
+  const [loginMethod, setLoginMethod] = useState<'email' | 'otp'>('email');
   const [signupStep, setSignupStep] = useState<1 | 2>(1);
   const [selectedRole, setSelectedRole] = useState<UserRole>('restaurant');
   const [showPassword, setShowPassword] = useState(false);
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingReset, setIsSendingReset] = useState(false);
+
+  // OTP Login states
+  const [mobilePhone, setMobilePhone] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [demoOtpHint, setDemoOtpHint] = useState<string | null>(null);
 
   // Shared form fields
   const [email, setEmail] = useState('');
@@ -59,9 +69,80 @@ function AuthContent() {
   const [businessName, setBusinessName] = useState('');
   const [address, setAddress] = useState('');
   const [fssaiCertUrl, setFssaiCertUrl] = useState('');
+  const [fssaiNumber, setFssaiNumber] = useState('');
   const [regCertUrl, setRegCertUrl] = useState('');
+  const [orgRegistrationNumber, setOrgRegistrationNumber] = useState('');
   const [entityPhotoUrl, setEntityPhotoUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSendOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mobilePhone || mobilePhone.trim().length < 8) {
+      showToast('Please enter a valid mobile number with country code', 'error');
+      return;
+    }
+    setIsSubmitting(true);
+    const res = await sendPhoneOtp(mobilePhone);
+    setIsSubmitting(false);
+    if (res.success) {
+      setOtpSent(true);
+      if (res.demoCode) {
+        setDemoOtpHint(res.demoCode);
+      }
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode || otpCode.trim().length < 4) {
+      showToast('Please enter the 6-digit OTP code', 'error');
+      return;
+    }
+    setIsSubmitting(true);
+    const success = await verifyPhoneOtp(mobilePhone, otpCode, selectedRole);
+    setIsSubmitting(false);
+    if (success) {
+      const isAdmin = selectedRole === ('admin' as UserRole);
+      const dest = isAdmin ? 'admin' : selectedRole === 'food_donor' ? 'donor' : selectedRole;
+      router.push(`/dashboard/${dest}`);
+    }
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail || !forgotEmail.includes('@')) {
+      showToast('Please enter a valid email address', 'error');
+      return;
+    }
+
+    setIsSendingReset(true);
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+      const hasRealSupabase =
+        supabaseUrl && !supabaseUrl.includes('placeholder') &&
+        supabaseKey && !supabaseKey.includes('placeholder');
+
+      if (hasRealSupabase) {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+          redirectTo: `${window.location.origin}/auth/reset-password`,
+        });
+        if (error) {
+          showToast(error.message || 'Failed to send password reset email', 'error');
+          setIsSendingReset(false);
+          return;
+        }
+      }
+
+      showToast(`Password reset link sent to ${forgotEmail}. Check your inbox!`, 'success');
+      setShowForgotModal(false);
+      setForgotEmail('');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send reset email', 'error');
+    }
+  };
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -104,12 +185,12 @@ function AuthContent() {
       showToast('Passwords do not match', 'error');
       return;
     }
-    if (selectedRole === 'restaurant' && (!fssaiCertUrl || !entityPhotoUrl)) {
-      showToast('FSSAI Certificate and Kitchen Photo are required for Restaurants', 'error');
+    if (selectedRole === 'restaurant' && (!fssaiNumber.trim() || !fssaiCertUrl || !entityPhotoUrl)) {
+      showToast('FSSAI License Number, FSSAI Certificate, and Kitchen Photo are required for Restaurants', 'error');
       return;
     }
-    if (selectedRole === 'ngo' && (!regCertUrl || !entityPhotoUrl)) {
-      showToast('Registration Certificate and Shelter Photo are required for NGOs', 'error');
+    if (selectedRole === 'ngo' && (!orgRegistrationNumber.trim() || !regCertUrl || !entityPhotoUrl)) {
+      showToast('Registration Number, Registration Certificate, and Shelter Photo are required for NGOs', 'error');
       return;
     }
 
@@ -123,7 +204,9 @@ function AuthContent() {
       business_name: businessName || fullName,
       address,
       fssai_cert_url: fssaiCertUrl,
+      fssai_number: fssaiNumber,
       registration_cert_url: regCertUrl,
+      org_registration_number: orgRegistrationNumber,
       entity_photo_url: entityPhotoUrl,
     });
     setIsSubmitting(false);
@@ -202,16 +285,6 @@ function AuthContent() {
                   <p className="text-[11px] text-gray-200">14,280+ meals rescued this week across 28 neighborhoods</p>
                 </div>
               </div>
-            </div>
-
-            {/* Demo credentials hint */}
-            <div className="relative z-10 bg-white/80 backdrop-blur-sm rounded-2xl p-3 text-xs space-y-1 border border-[#e1bfb5]/40">
-              <p className="font-bold text-on-surface flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px] text-primary">info</span>
-                Demo Credentials
-              </p>
-              <p className="text-on-surface-variant">Email: <span className="font-bold text-on-surface">bakery@goldenharvest.com</span></p>
-              <p className="text-on-surface-variant">Password: <span className="font-bold text-on-surface">demo1234</span></p>
             </div>
           </div>
 
@@ -310,22 +383,39 @@ function AuthContent() {
                           <label className="block text-xs font-bold text-on-surface mb-1">Mobile Phone Number</label>
                           <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
                         </div>
-                        {(selectedRole === 'restaurant' || selectedRole === 'ngo' || selectedRole === 'food_donor') && (
+                        {/* Business/Trust Name — not shown for Food Donors (individuals, not businesses) */}
+                        {(selectedRole === 'restaurant' || selectedRole === 'ngo') && (
                           <div>
-                            <label className="block text-xs font-bold text-on-surface mb-1">Business / Trust Name *</label>
-                            <input type="text" required value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="Golden Harvest Bakery / St. Jude Trust" className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
+                            <label className="block text-xs font-bold text-on-surface mb-1">
+                              {selectedRole === 'restaurant' ? 'Restaurant / Cafe Name *' : 'Organisation / Trust Name *'}
+                            </label>
+                            <input type="text" required value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder={selectedRole === 'restaurant' ? 'Golden Harvest Bakery' : 'St. Jude Shelter Trust'} className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
                           </div>
                         )}
                       </div>
 
-                      <div>
-                        <label className="block text-xs font-bold text-on-surface mb-1">Pickup / Physical Address</label>
-                        <input type="text" value={address} onChange={e => setAddress(e.target.value)} placeholder="42 MG Road, Downtown Chennai" className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
-                      </div>
+                      {/* Permanent address — shown for restaurant & NGO (fixed location).                       */}
+                      {/* Food Donors enter pickup address per-listing, not at registration. */}
+                      {(selectedRole === 'restaurant' || selectedRole === 'ngo') && (
+                        <div>
+                          <label className="block text-xs font-bold text-on-surface mb-1">Restaurant / Shelter Address *</label>
+                          <input type="text" required value={address} onChange={e => setAddress(e.target.value)} placeholder="42 MG Road, Downtown Chennai" className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
+                        </div>
+                      )}
+                      {selectedRole === 'customer' && (
+                        <div>
+                          <label className="block text-xs font-bold text-on-surface mb-1">Delivery Address (Optional)</label>
+                          <input type="text" value={address} onChange={e => setAddress(e.target.value)} placeholder="Flat 4B, Emerald Heights, Chennai" className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary" />
+                        </div>
+                      )}
 
                       {selectedRole === 'restaurant' && (
                         <div className="p-4 rounded-2xl bg-primary-fixed/20 border border-primary/30 space-y-3">
-                          <span className="text-xs font-bold text-primary block">FSSAI Compliance Documents (Required)</span>
+                          <span className="text-xs font-bold text-primary block">FSSAI Compliance Documents & License (Required)</span>
+                          <div>
+                            <label className="block text-[11px] font-bold text-on-surface mb-1">FSSAI License Number *</label>
+                            <input type="text" required value={fssaiNumber} onChange={e => setFssaiNumber(e.target.value)} placeholder="e.g. 10019043000123" className="w-full px-4 py-2.5 rounded-2xl bg-white border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary mb-2" />
+                          </div>
                           <div>
                             <label className="block text-[11px] font-bold text-on-surface mb-1">Upload FSSAI License Certificate *</label>
                             <input type="file" accept="image/*" onChange={e => handleFileUpload(e, setFssaiCertUrl)} className="block w-full text-xs text-on-surface-variant file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-primary file:text-white" />
@@ -339,7 +429,11 @@ function AuthContent() {
 
                       {selectedRole === 'ngo' && (
                         <div className="p-4 rounded-2xl bg-secondary-fixed/20 border border-[#006c49]/30 space-y-3">
-                          <span className="text-xs font-bold text-[#006c49] block">NGO / Trust Registration Documents (Required)</span>
+                          <span className="text-xs font-bold text-[#006c49] block">NGO / Trust Registration Documents & Number (Required)</span>
+                          <div>
+                            <label className="block text-[11px] font-bold text-on-surface mb-1">Trust / NGO Registration Number *</label>
+                            <input type="text" required value={orgRegistrationNumber} onChange={e => setOrgRegistrationNumber(e.target.value)} placeholder="e.g. TN/2021/0019842" className="w-full px-4 py-2.5 rounded-2xl bg-white border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary mb-2" />
+                          </div>
                           <div>
                             <label className="block text-[11px] font-bold text-on-surface mb-1">Upload Trust Registration Certificate *</label>
                             <input type="file" accept="image/*" onChange={e => handleFileUpload(e, setRegCertUrl)} className="block w-full text-xs text-on-surface-variant file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#006c49] file:text-white" />
@@ -402,50 +496,152 @@ function AuthContent() {
                     </div>
                   )}
 
-                  <form onSubmit={handleLoginSubmit} className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface mb-1">
-                        Email Address *
-                      </label>
-                      <input
-                        id="login-email"
-                        type="email"
-                        required
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        placeholder={selectedRole === ('admin' as UserRole) ? 'admin@sharebytes.org' : 'your@email.com'}
-                        className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary"
-                      />
-                    </div>
-
-                    {/* Issue 1 Fix: Password is REQUIRED and validated */}
-                    <div>
-                      <label className="block text-xs font-bold text-on-surface mb-1">Password *</label>
-                      <div className="relative">
-                        <input
-                          id="login-password"
-                          type={showPassword ? 'text' : 'password'}
-                          required
-                          value={password}
-                          onChange={e => setPassword(e.target.value)}
-                          placeholder="••••••••"
-                          className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary pr-10"
-                        />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2.5 text-on-surface-variant hover:text-primary">
-                          <span className="material-symbols-outlined text-[18px]">{showPassword ? 'visibility_off' : 'visibility'}</span>
-                        </button>
-                      </div>
-                    </div>
-
+                  {/* Auth Method Toggle: Email & Password vs Mobile & OTP */}
+                  <div className="flex rounded-2xl bg-surface-container p-1 text-xs font-bold">
                     <button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className="w-full py-3.5 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                      type="button"
+                      onClick={() => { setLoginMethod('email'); setOtpSent(false); }}
+                      className={`flex-1 py-2 rounded-xl text-center transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'email' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
                     >
-                      <span className="material-symbols-outlined text-[18px]">login</span>
-                      <span>{isSubmitting ? 'Signing in...' : `Sign In as ${selectedRole === ('admin' as UserRole) ? 'Admin' : ROLES.find(r => r.id === selectedRole)?.label || selectedRole}`}</span>
+                      <span className="material-symbols-outlined text-[16px]">mail</span>
+                      <span>Email & Password</span>
                     </button>
-                  </form>
+                    <button
+                      type="button"
+                      onClick={() => { setLoginMethod('otp'); }}
+                      className={`flex-1 py-2 rounded-xl text-center transition-all flex items-center justify-center gap-1.5 ${loginMethod === 'otp' ? 'bg-white text-primary shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">smartphone</span>
+                      <span>Mobile & OTP</span>
+                    </button>
+                  </div>
+
+                  {loginMethod === 'email' ? (
+                    <form onSubmit={handleLoginSubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-on-surface mb-1">
+                          Email Address *
+                        </label>
+                        <input
+                          id="login-email"
+                          type="email"
+                          required
+                          value={email}
+                          onChange={e => setEmail(e.target.value)}
+                          placeholder={selectedRole === ('admin' as UserRole) ? 'admin@sharebytes.org' : 'your@email.com'}
+                          className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-xs font-bold text-on-surface">Password *</label>
+                          <button
+                            type="button"
+                            onClick={() => { setForgotEmail(email); setShowForgotModal(true); }}
+                            className="text-[11px] font-bold text-primary hover:underline"
+                          >
+                            Forgot Password?
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <input
+                            id="login-password"
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            value={password}
+                            onChange={e => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary pr-10"
+                          />
+                          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2.5 text-on-surface-variant hover:text-primary">
+                            <span className="material-symbols-outlined text-[18px]">{showPassword ? 'visibility_off' : 'visibility'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="w-full py-3.5 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">login</span>
+                        <span>{isSubmitting ? 'Signing in...' : `Sign In as ${selectedRole === ('admin' as UserRole) ? 'Admin' : ROLES.find(r => r.id === selectedRole)?.label || selectedRole}`}</span>
+                      </button>
+                    </form>
+                  ) : (
+                    <div className="space-y-4">
+                      {!otpSent ? (
+                        <form onSubmit={handleSendOtp} className="space-y-4">
+                          <div>
+                            <label className="block text-xs font-bold text-on-surface mb-1">
+                              Mobile Phone Number *
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="tel"
+                                required
+                                value={mobilePhone}
+                                onChange={e => setMobilePhone(e.target.value)}
+                                placeholder="+91 98765 43210"
+                                className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </div>
+                            <p className="text-[11px] text-on-surface-variant mt-1">We will send a 6-digit OTP code to verify your mobile number.</p>
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className="w-full py-3.5 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">sms</span>
+                            <span>{isSubmitting ? 'Sending OTP...' : 'Send OTP Code'}</span>
+                          </button>
+                        </form>
+                      ) : (
+                        <form onSubmit={handleVerifyOtp} className="space-y-4">
+                          {demoOtpHint && (
+                            <div className="p-3 rounded-2xl bg-[#eaf4ee] border border-[#005236]/30 text-xs font-bold text-[#005236] flex items-center gap-2">
+                              <span className="material-symbols-outlined text-[18px]">key</span>
+                              <span>[DEMO MODE] Enter OTP: <strong>{demoOtpHint}</strong></span>
+                            </div>
+                          )}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="block text-xs font-bold text-on-surface">Enter 6-Digit OTP Code *</label>
+                              <button
+                                type="button"
+                                onClick={() => { setOtpSent(false); setOtpCode(''); }}
+                                className="text-[11px] font-bold text-primary hover:underline"
+                              >
+                                Change Phone Number
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              required
+                              maxLength={6}
+                              value={otpCode}
+                              onChange={e => setOtpCode(e.target.value)}
+                              placeholder="123456"
+                              className="w-full px-4 py-3 text-center tracking-[8px] font-mono text-base font-bold rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            <p className="text-[11px] text-on-surface-variant mt-1">OTP sent to {mobilePhone}</p>
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={isSubmitting}
+                            className="w-full py-3.5 rounded-full bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">verified_user</span>
+                            <span>{isSubmitting ? 'Verifying...' : 'Verify OTP & Log In'}</span>
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  )}
 
                   {/* Issue 5 Fix: "Admin? Sign in here" moved to Login page */}
                   {selectedRole !== ('admin' as UserRole) && (
@@ -465,6 +661,57 @@ function AuthContent() {
           </div>
         </div>
       </div>
+
+      {/* Forgot Password Modal */}
+      {showForgotModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-[#e1bfb5]/40 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <h3 className="text-base font-bold text-on-surface">Reset Password</h3>
+              <button
+                type="button"
+                onClick={() => setShowForgotModal(false)}
+                className="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-primary"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+            <p className="text-xs text-on-surface-variant font-medium">
+              Enter your email address and we will send you a password reset link.
+            </p>
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-on-surface mb-1">Email Address *</label>
+                <input
+                  type="email"
+                  required
+                  value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  className="w-full px-4 py-3 rounded-2xl bg-surface-container-low border border-[#e1bfb5]/40 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotModal(false)}
+                  className="flex-1 py-2.5 rounded-full border border-[#e1bfb5] text-xs font-bold text-on-surface hover:bg-surface-container"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingReset}
+                  className="flex-1 py-2.5 rounded-full bg-primary hover:bg-primary-dark text-white text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1 disabled:opacity-60"
+                >
+                  <span className="material-symbols-outlined text-[16px]">send</span>
+                  {isSendingReset ? 'Sending...' : 'Send Link'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

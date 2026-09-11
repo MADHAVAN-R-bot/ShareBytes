@@ -1,5 +1,6 @@
 import { UserProfile, FoodListing, FoodClaim, UserNotification, AuditLog, UserRole, VerificationStatus, ClaimStatus } from '@/lib/types';
 import { initialProfiles, initialListings, initialClaims, initialNotifications, initialAuditLogs } from './mockData';
+import { parseSupabaseError } from '@/lib/supabase/error';
 
 const STORAGE_KEYS = {
   PROFILES: 'sb_profiles_v1',
@@ -26,6 +27,21 @@ function setItem<T>(key: string, value: T): void {
   } catch (err) {
     console.error('LocalStorage error:', err);
   }
+}
+
+function getSupabaseClient() {
+  if (typeof window === 'undefined') return null;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  if (url && !url.includes('placeholder') && key && !key.includes('placeholder')) {
+    try {
+      const { createClient } = require('@/lib/supabase/client');
+      return createClient();
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export class DataService {
@@ -85,14 +101,40 @@ export class DataService {
     return target;
   }
 
+  static toggleUserSuspension(userId: string, actorId?: string): UserProfile {
+    const profiles = this.getProfiles();
+    const target = profiles.find(p => p.id === userId);
+    if (!target) throw new Error('User profile not found');
+
+    target.is_suspended = !target.is_suspended;
+    setItem(STORAGE_KEYS.PROFILES, profiles);
+
+    this.addAuditLog({
+      actor_id: actorId || 'usr-admin-01',
+      action: target.is_suspended ? 'SUSPENDED_USER' : 'ACTIVATED_USER',
+      target: target.business_name || target.full_name || target.email,
+      details: { role: target.role, is_suspended: target.is_suspended },
+    });
+
+    return target;
+  }
+
   // Listings
   static getListings(): FoodListing[] {
     return getItem<FoodListing[]>(STORAGE_KEYS.LISTINGS, initialListings);
   }
 
   static getCustomerListings(): FoodListing[] {
-    // Customers can ONLY see discounted restaurant listings (never donation-only)
-    return this.getListings().filter(l => !l.is_donation_only && l.status === 'available');
+    const now = new Date();
+    // Customers can see:
+    // 1. All discounted restaurant listings (is_donation_only = false)
+    // 2. Unclaimed donation listings whose 1-hour NGO priority window HAS PASSED (is_donation_only = true and now >= ngo_priority_until)
+    return this.getListings().filter(l => {
+      if (l.status !== 'available') return false;
+      if (!l.is_donation_only) return true;
+      if (l.ngo_priority_until && now >= new Date(l.ngo_priority_until)) return true;
+      return false;
+    });
   }
 
   static getNGOListings(): FoodListing[] {
@@ -105,12 +147,25 @@ export class DataService {
   }
 
   static addListing(data: Omit<FoodListing, 'id' | 'created_at' | 'status'>): FoodListing {
+    const creator = this.getProfileById(data.created_by);
+    if (creator && creator.role === 'restaurant' && creator.verified_status !== 'verified') {
+      throw new Error('Your account is pending Admin verification. Restaurant accounts must be verified before listing food.');
+    }
+    if (creator && creator.is_suspended) {
+      throw new Error('Your account has been suspended by Admin. You cannot create listings.');
+    }
+
     const listings = this.getListings();
+    const now = new Date().toISOString();
     const newListing: FoodListing = {
       ...data,
       id: `lst-${Date.now()}`,
       status: 'available',
-      created_at: new Date().toISOString(),
+      created_at: now,
+      // NGO priority: 1-hour exclusive claim window ONLY for free donation listings
+      ngo_priority_until: data.is_donation_only
+        ? new Date(Date.now() + 60 * 60 * 1000).toISOString()
+        : undefined,
     };
     listings.unshift(newListing);
     setItem(STORAGE_KEYS.LISTINGS, listings);
@@ -153,8 +208,35 @@ export class DataService {
     return this.getClaims().filter(c => listings.includes(c.listing_id));
   }
 
-  static createClaim(data: Omit<FoodClaim, 'id' | 'created_at' | 'status'>): FoodClaim {
+  static createClaim(data: Omit<FoodClaim, 'id' | 'created_at' | 'status'>, claimerRole?: string): FoodClaim {
+    const claimer = this.getProfileById(data.claimed_by);
+    if (claimer && claimer.role === 'ngo' && claimer.verified_status !== 'verified') {
+      throw new Error('Your account is pending Admin verification. NGO accounts must be verified before claiming food.');
+    }
+    if (claimer && claimer.is_suspended) {
+      throw new Error('Your account has been suspended by Admin. You cannot claim food.');
+    }
+
     const claims = getItem<FoodClaim[]>(STORAGE_KEYS.CLAIMS, initialClaims);
+
+    // ── NGO Priority Window Enforcement (atomic check) ──────────────────────
+    // Applies ONLY to donation-only listings during their active priority window
+    const listing = this.getListings().find(l => l.id === data.listing_id);
+    if (listing?.is_donation_only && listing?.ngo_priority_until) {
+      const windowEnd = new Date(listing.ngo_priority_until).getTime();
+      const isWindowActive = Date.now() < windowEnd;
+      const isNgo = claimerRole === 'ngo';
+      if (isWindowActive && !isNgo) {
+        const minsLeft = Math.ceil((windowEnd - Date.now()) / 60000);
+        throw new Error(`NGO priority window active — available to customers in ${minsLeft} minute${minsLeft !== 1 ? 's' : ''}. NGOs have first priority on donation listings.`);
+      }
+    }
+
+    // ── Check listing still available (race-safe) ────────────────────────────
+    if (listing && listing.status !== 'available') {
+      throw new Error('Already claimed by another user. Please check other available listings.');
+    }
+
     const newClaim: FoodClaim = {
       ...data,
       id: `clm-${Date.now()}`,
@@ -164,8 +246,7 @@ export class DataService {
     claims.unshift(newClaim);
     setItem(STORAGE_KEYS.CLAIMS, claims);
 
-    // Notify listing creator
-    const listing = this.getListings().find(l => l.id === data.listing_id);
+    // Notify listing creator (reuse `listing` fetched above for priority check)
     if (listing) {
       this.addNotification({
         user_id: listing.created_by,
@@ -280,5 +361,49 @@ export class DataService {
         admin: profiles.filter(p => p.role === 'admin').length,
       },
     };
+  }
+
+  // ── Async Supabase Sync Helpers (Network-Resilient) ──────────────────────────
+
+  static async fetchSupabaseListings(): Promise<{ data: FoodListing[] | null; error: string | null }> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return { data: null, error: null };
+      const { data, error } = await supabase.from('listings').select('*').order('created_at', { ascending: false });
+      if (error) {
+        return { data: null, error: parseSupabaseError(error, 'Failed to fetch listings from database') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: parseSupabaseError(err, 'Failed to fetch listings') };
+    }
+  }
+
+  static async fetchSupabaseClaims(): Promise<{ data: FoodClaim[] | null; error: string | null }> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return { data: null, error: null };
+      const { data, error } = await supabase.from('claims').select('*').order('created_at', { ascending: false });
+      if (error) {
+        return { data: null, error: parseSupabaseError(error, 'Failed to fetch claims from database') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: parseSupabaseError(err, 'Failed to fetch claims') };
+    }
+  }
+
+  static async saveSupabaseListing(listing: Omit<FoodListing, 'id' | 'created_at' | 'status'>): Promise<{ data: any; error: string | null }> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return { data: null, error: null };
+      const { data, error } = await supabase.from('listings').insert([listing]).select().single();
+      if (error) {
+        return { data: null, error: parseSupabaseError(error, 'Failed to save listing to database') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: parseSupabaseError(err, 'Failed to save listing') };
+    }
   }
 }

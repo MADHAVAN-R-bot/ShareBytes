@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { DataService } from '@/lib/services/dataService';
 import { UserProfile, UserRole } from '@/lib/types';
+import { useAuth } from '@/context/AuthContext';
 
 const roleColor: Record<UserRole, string> = {
   customer: 'bg-primary-fixed/30 text-primary',
@@ -14,12 +15,30 @@ const roleColor: Record<UserRole, string> = {
 };
 
 export default function AdminManageUsersPage() {
+  const { user: currentAdmin, showToast } = useAuth();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
-  const allProfiles = DataService.getProfiles();
+  const [profiles, setProfiles] = useState<UserProfile[]>(() => DataService.getProfiles());
 
-  const filtered = allProfiles.filter(p => {
-    const matchSearch = p.full_name.toLowerCase().includes(search.toLowerCase()) || p.email.toLowerCase().includes(search.toLowerCase());
+  const handleToggleSuspend = (targetUser: UserProfile) => {
+    if (targetUser.role === 'admin') {
+      showToast('Admin accounts cannot be suspended.', 'error');
+      return;
+    }
+    try {
+      const updated = DataService.toggleUserSuspension(targetUser.id, currentAdmin?.id);
+      setProfiles(DataService.getProfiles());
+      showToast(
+        `User ${updated.full_name || updated.email} has been ${updated.is_suspended ? 'suspended' : 'reactivated'}.`,
+        updated.is_suspended ? 'error' : 'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update user status', 'error');
+    }
+  };
+
+  const filtered = profiles.filter(p => {
+    const matchSearch = (p.full_name || '').toLowerCase().includes(search.toLowerCase()) || p.email.toLowerCase().includes(search.toLowerCase());
     const matchRole = roleFilter === 'all' || p.role === roleFilter;
     return matchSearch && matchRole;
   });
@@ -30,7 +49,7 @@ export default function AdminManageUsersPage() {
         <div>
           <div className="text-xs font-bold text-primary uppercase tracking-widest mb-1">Administration</div>
           <h1 className="text-2xl font-bold text-on-surface">Manage Users</h1>
-          <p className="text-xs text-on-surface-variant font-medium mt-1">Browse and search all registered platform users.</p>
+          <p className="text-xs text-on-surface-variant font-medium mt-1">Browse, search, activate or suspend platform user accounts.</p>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
@@ -48,11 +67,11 @@ export default function AdminManageUsersPage() {
           </select>
         </div>
 
-        <div className="bg-white rounded-2xl border border-[#e1bfb5]/40 shadow-sm overflow-hidden">
-          <table className="w-full text-xs">
+        <div className="bg-white rounded-2xl border border-[#e1bfb5]/40 shadow-sm overflow-x-auto">
+          <table className="w-full text-xs min-w-[700px]">
             <thead className="bg-surface-container-low border-b border-[#e1bfb5]/40">
               <tr>
-                {['Name', 'Email', 'Role', 'Status', 'Joined'].map(h => (
+                {['Name', 'Email', 'Role', 'Verification', 'Account Status', 'Joined', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 font-bold text-on-surface-variant uppercase text-[10px] tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -60,19 +79,56 @@ export default function AdminManageUsersPage() {
             <tbody>
               {filtered.map((p, i) => (
                 <tr key={p.id} className={`border-b border-gray-100 last:border-0 ${i % 2 === 0 ? 'bg-white' : 'bg-surface-container-low/30'}`}>
-                  <td className="px-4 py-3 font-bold text-on-surface">{p.full_name}</td>
+                  <td className="px-4 py-3 font-bold text-on-surface">{p.full_name || 'N/A'}</td>
                   <td className="px-4 py-3 text-on-surface-variant">{p.email}</td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${roleColor[p.role]}`}>{p.role.replace('_', ' ')}</span></td>
                   <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${p.verified_status === 'verified' ? 'bg-[#eaf4ee] text-[#005236]' : p.verified_status === 'rejected' ? 'bg-[#ffdad6] text-[#93000a]' : 'bg-tertiary-container text-on-tertiary-container'}`}>{p.verified_status}</span></td>
-                  <td className="px-4 py-3 text-on-surface-variant">{new Date(p.created_at).toLocaleDateString('en-IN')}</td>
+                  <td className="px-4 py-3">
+                    {p.is_suspended ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-[#ffdad6] text-[#93000a] flex items-center w-max gap-1">
+                        <span className="material-symbols-outlined text-[12px]">block</span>
+                        Suspended
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-[#eaf4ee] text-[#005236] flex items-center w-max gap-1">
+                        <span className="material-symbols-outlined text-[12px]">check_circle</span>
+                        Active
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-on-surface-variant">{p.created_at ? new Date(p.created_at).toLocaleDateString('en-IN') : 'N/A'}</td>
+                  <td className="px-4 py-3">
+                    {p.role === 'admin' ? (
+                      <span className="text-[11px] text-gray-400 font-medium italic">Protected</span>
+                    ) : p.is_suspended ? (
+                      <button
+                        onClick={() => handleToggleSuspend(p)}
+                        className="px-3 py-1.5 rounded-full bg-[#eaf4ee] text-[#005236] hover:bg-emerald-200 transition-all font-bold text-[11px] flex items-center gap-1 shadow-sm"
+                        title="Reactivate user account"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">play_circle</span>
+                        Activate
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleToggleSuspend(p)}
+                        className="px-3 py-1.5 rounded-full bg-[#ffdad6] text-[#93000a] hover:bg-red-200 transition-all font-bold text-[11px] flex items-center gap-1 shadow-sm"
+                        title="Suspend user account"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">pause_circle</span>
+                        Suspend
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           {filtered.length === 0 && <div className="p-8 text-center text-xs text-on-surface-variant">No users match your search.</div>}
         </div>
-        <p className="text-xs text-on-surface-variant">{filtered.length} of {allProfiles.length} users shown</p>
+        <p className="text-xs text-on-surface-variant">{filtered.length} of {profiles.length} users shown</p>
       </div>
     </DashboardLayout>
   );
 }
+
